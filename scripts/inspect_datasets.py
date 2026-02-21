@@ -3,11 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import sys
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+# Ensure `src` package imports work even when script is run from outside repo root.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
 
 from src.wertuy.data.dataset_specs import DATASET_SPECS, KDD_FEATURE_COLUMNS, DatasetSpec
 
@@ -48,6 +54,32 @@ def ensure_files(spec: DatasetSpec, data_dir: Path) -> list[Path]:
         missing_text = "\n  - ".join(missing)
         raise FileNotFoundError(f"Missing expected files for '{spec.name}':\n  - {missing_text}")
     return file_paths
+
+
+def resolve_data_dir(requested_data_dir: Path) -> Path:
+    """Resolve dataset root robustly for common project layouts.
+
+    Supports these common patterns:
+    - <repo>/data/raw
+    - <repo>/../data/raw (sibling to repo directory)
+    """
+
+    candidates = [requested_data_dir]
+    if not requested_data_dir.is_absolute():
+        candidates.append((REPO_ROOT / requested_data_dir).resolve())
+        candidates.append((REPO_ROOT.parent / requested_data_dir).resolve())
+
+    for candidate in candidates:
+        if candidate.exists() and candidate.is_dir():
+            return candidate
+
+    tried = "\n  - ".join(str(p) for p in candidates)
+    raise FileNotFoundError(
+        "Could not locate data_dir. Tried:\n"
+        f"  - {tried}\n"
+        "Hint: if your layout is tabularToGraph/{data,wertyu}, run with "
+        "--data_dir ../data/raw from inside 'wertyu'."
+    )
 
 
 def load_kdd(paths: list[Path]) -> pd.DataFrame:
@@ -175,6 +207,17 @@ def detect_entity_columns(df_full: pd.DataFrame, spec: DatasetSpec) -> list[str]
     return sorted(set(detected), key=str.lower)
 
 
+def detect_split_columns(df_full: pd.DataFrame) -> dict[str, Any]:
+    split_candidates = ["split", "is_train", "train", "set", "dataset"]
+    lower_map = {col.lower(): col for col in df_full.columns}
+    detected = [lower_map[c] for c in split_candidates if c in lower_map]
+    return {
+        "detected_split_columns": detected,
+        "has_explicit_split_column": bool(detected),
+        "uses_source_file_fallback": "_source_file" in df_full.columns,
+    }
+
+
 def suggest_column_types(df_full: pd.DataFrame) -> tuple[list[str], list[str]]:
     categorical: list[str] = []
     numeric: list[str] = []
@@ -221,6 +264,7 @@ def build_dataset_report(
     labels = detect_labels(df_full, spec)
     timestamps = detect_timestamps(df_sample, spec)
     entity_cols = detect_entity_columns(df_full, spec)
+    split_info = detect_split_columns(df_full)
     categorical_cols, numeric_cols = suggest_column_types(df_full)
 
     return {
@@ -237,6 +281,7 @@ def build_dataset_report(
         "label_analysis": labels,
         "timestamp_analysis": timestamps,
         "entity_column_candidates": entity_cols,
+        "split_detection": split_info,
         "suggested_categorical_columns": categorical_cols,
         "suggested_numeric_columns": numeric_cols,
     }
@@ -271,6 +316,7 @@ def write_markdown_summary(out_dir: Path, reports: list[dict[str, Any]]) -> Path
         labels = report["label_analysis"]["detected_label_columns"]
         timestamp = report["timestamp_analysis"]["detected_timestamp_column"]
         entity_cols = report["entity_column_candidates"]
+        split_info = report["split_detection"]
 
         lines.extend(
             [
@@ -282,6 +328,11 @@ def write_markdown_summary(out_dir: Path, reports: list[dict[str, Any]]) -> Path
                 f"- Detected labels: {', '.join(labels) if labels else 'None'}",
                 f"- Candidate entity columns: {', '.join(entity_cols) if entity_cols else 'None'}",
                 f"- Candidate timestamp column: {timestamp if timestamp else 'None'}",
+                (
+                    f"- Explicit split columns: {', '.join(split_info['detected_split_columns'])}"
+                    if split_info["detected_split_columns"]
+                    else "- Explicit split columns: None (using _source_file fallback when available)"
+                ),
                 "",
             ]
         )
@@ -301,12 +352,15 @@ def main() -> None:
     args = parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
+    resolved_data_dir = resolve_data_dir(args.data_dir)
+    LOGGER.info("Using data_dir: %s", resolved_data_dir)
+
     args.out_dir.mkdir(parents=True, exist_ok=True)
 
     all_reports: list[dict[str, Any]] = []
     for spec in DATASET_SPECS.values():
         LOGGER.info("Inspecting dataset: %s", spec.name)
-        paths = ensure_files(spec, args.data_dir)
+        paths = ensure_files(spec, resolved_data_dir)
         df_full = load_dataset(spec, paths)
         df_sample, sampled = sample_frame(df_full, args.sample_rows, args.seed)
         report = build_dataset_report(spec, paths, df_full, df_sample, sampled)
