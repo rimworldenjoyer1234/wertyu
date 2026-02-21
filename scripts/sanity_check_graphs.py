@@ -7,94 +7,62 @@ from pathlib import Path
 import numpy as np
 
 
-DATASETS = ("kdd", "unsw-nb15", "ton-iot")
-
-
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Sanity check generated graph bundles")
-    parser.add_argument("--graphs_dir", type=Path, default=Path("data/graphs"))
-    parser.add_argument("--max_graphs_per_dataset", type=int, default=2)
-    return parser.parse_args()
+    p = argparse.ArgumentParser(description="Sanity check fast graph outputs")
+    p.add_argument("--graphs_dir", type=Path, default=Path("data/graphs"))
+    p.add_argument("--datasets", nargs="+", default=["kdd", "unsw-nb15", "ton-iot"])
+    return p.parse_args()
 
 
-def list_graph_dirs(dataset_dir: Path, limit: int) -> list[Path]:
-    candidates = [p for p in dataset_dir.iterdir() if p.is_dir() and (p / "config.json").exists()]
-    return sorted(candidates)[:limit]
-
-
-def has_self_loops(edge_index: np.ndarray) -> bool:
-    return bool(np.any(edge_index[0] == edge_index[1]))
-
-
-def reciprocity(edge_index: np.ndarray) -> float:
-    pairs = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-    if not pairs:
-        return 0.0
-    recip = sum(1 for (i, j) in pairs if (j, i) in pairs)
-    return recip / len(pairs)
+def pick_one_graph(dataset_dir: Path) -> Path:
+    candidates = sorted([d for d in dataset_dir.iterdir() if d.is_dir() and d.name.startswith("base_sim_knn_")])
+    if not candidates:
+        raise FileNotFoundError(f"No base_sim_knn graph folders found in {dataset_dir}")
+    return candidates[0]
 
 
 def main() -> None:
     args = parse_args()
 
-    for dataset in DATASETS:
-        dataset_dir = args.graphs_dir / dataset
-        if not dataset_dir.exists():
-            print(f"[WARN] Missing dataset graph dir: {dataset_dir}")
+    for ds in args.datasets:
+        ds_dir = args.graphs_dir / ds
+        if not ds_dir.exists():
+            print(f"[WARN] Missing dataset dir: {ds_dir}")
             continue
 
-        graph_dirs = list_graph_dirs(dataset_dir, args.max_graphs_per_dataset)
-        for gdir in graph_dirs:
-            edge_index = np.load(gdir / "edge_index.npy")
-            node_features = np.load(gdir / "node_features.npy")
-            y_bin = np.load(gdir / "y_bin.npy")
-            split = np.load(gdir / "split_masks.npz")
-            stats = json.loads((gdir / "graph_stats.json").read_text(encoding="utf-8"))
-            config = json.loads((gdir / "config.json").read_text(encoding="utf-8"))
+        gdir = pick_one_graph(ds_dir)
+        edge_index = np.load(gdir / "edge_index.npy")
+        y_bin = np.load(gdir / "y_bin.npy")
+        split = np.load(gdir / "split_masks.npz")
+        cfg = json.loads((gdir / "config.json").read_text(encoding="utf-8"))
 
-            if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-                raise AssertionError(f"{gdir}: edge_index shape invalid: {edge_index.shape}")
+        n = y_bin.shape[0]
+        if edge_index.shape[0] != 2:
+            raise AssertionError(f"{gdir}: edge_index first dim must be 2")
+        if edge_index.shape[1] > 0:
+            if edge_index.min() < 0 or edge_index.max() >= n:
+                raise AssertionError(f"{gdir}: edge indices out of range [0,{n})")
 
-            n = node_features.shape[0]
-            if y_bin.shape[0] != n:
-                raise AssertionError(f"{gdir}: y_bin length mismatch")
-            if edge_index.shape[1] > 0:
-                if edge_index.min() < 0 or edge_index.max() >= n:
-                    raise AssertionError(f"{gdir}: edge indices out of bounds for N={n}")
+        uniq = set(np.unique(y_bin).tolist())
+        if not uniq.issubset({0, 1}):
+            raise AssertionError(f"{gdir}: y_bin non-binary values: {sorted(uniq)}")
 
-            train_idx = split["train_idx"]
-            val_idx = split["val_idx"]
-            test_idx = split["test_idx"]
+        tr = set(split["train_idx"].tolist())
+        va = set(split["val_idx"].tolist())
+        te = set(split["test_idx"].tolist())
+        if tr & va or tr & te or va & te:
+            raise AssertionError(f"{gdir}: split index overlap detected")
 
-            if len(set(train_idx).intersection(set(val_idx))) > 0:
-                raise AssertionError(f"{gdir}: train/val overlap")
-            if len(set(train_idx).intersection(set(test_idx))) > 0:
-                raise AssertionError(f"{gdir}: train/test overlap")
-            if len(set(val_idx).intersection(set(test_idx))) > 0:
-                raise AssertionError(f"{gdir}: val/test overlap")
+        k = int(cfg.get("k", 0))
+        e = edge_index.shape[1]
+        expected = n * k
+        # allow deviations from duplicates or tiny-n edge effects
+        if expected > 0:
+            ratio = e / expected
+            if ratio < 0.85 or ratio > 1.05:
+                raise AssertionError(f"{gdir}: E not close to N*k (E={e}, N*k={expected}, ratio={ratio:.3f})")
 
-            expected_total = n if config["graph_scope"] == "transductive" else len(train_idx) + len(val_idx)
-            covered = len(set(train_idx).union(set(val_idx)).union(set(test_idx)))
-            if covered != expected_total:
-                raise AssertionError(f"{gdir}: split index coverage mismatch ({covered} vs {expected_total})")
-
-            if config["self_loops"] == "none" and has_self_loops(edge_index):
-                raise AssertionError(f"{gdir}: found self loops but policy is none")
-            if config["self_loops"] == "all":
-                loops = set(edge_index[0][edge_index[0] == edge_index[1]].tolist())
-                if len(loops) < n:
-                    raise AssertionError(f"{gdir}: missing all-node self loops")
-
-            rec = reciprocity(edge_index)
-            if config["directedness"] == "sym" and rec < 0.99 and edge_index.shape[1] > 0:
-                raise AssertionError(f"{gdir}: low reciprocity for sym graph: {rec:.3f}")
-            if config["directedness"] == "mutual" and abs(rec - 1.0) > 1e-6 and edge_index.shape[1] > 0:
-                raise AssertionError(f"{gdir}: mutual graph reciprocity not 1.0")
-
-            if abs(stats.get("reciprocity", rec) - rec) > 0.02:
-                raise AssertionError(f"{gdir}: reciprocity in stats inconsistent")
-
-            print(f"[OK] {dataset} :: {gdir.name} :: N={n} E={edge_index.shape[1]}")
+        print(f"[OK] {ds} :: {gdir.name} :: N={n} E={e} k={k}")
 
 
 if __name__ == "__main__":

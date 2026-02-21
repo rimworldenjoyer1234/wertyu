@@ -5,8 +5,7 @@ from src.wertuy.graphs.builders import (
 )
 from src.wertuy.graphs.io import config_matches, save_graph_bundle, save_summary_csv
 from src.wertuy.graphs.metrics import compute_graph_metrics
-from src.wertuy.graphs.ops import apply_directedness, apply_self_loops, dedupe_edges
-from src.wertuy.graphs.sampling import reindex_split_indices, stratified_sample_indices
+from src.wertuy.graphs.ops import apply_directedness, apply_self_loops, build_adjacency, to_edge_index
 
 __all__ = [
     "DATASET_ENTITY_COLUMNS",
@@ -16,9 +15,8 @@ __all__ = [
     "save_graph_bundle",
     "save_summary_csv",
     "compute_graph_metrics",
+    "build_adjacency",
     "apply_directedness",
     "apply_self_loops",
-    "dedupe_edges",
-    "reindex_split_indices",
-    "stratified_sample_indices",
+    "to_edge_index",
 ]

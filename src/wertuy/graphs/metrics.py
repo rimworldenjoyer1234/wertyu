@@ -1,116 +1,78 @@
 from __future__ import annotations
 
-from collections import deque
 from typing import Any
 
 import numpy as np
+from scipy import sparse
+from scipy.sparse.csgraph import connected_components
 
 
-def _undirected_adjacency(num_nodes: int, edge_index: np.ndarray) -> list[set[int]]:
-    adj = [set() for _ in range(num_nodes)]
-    for i, j in zip(edge_index[0], edge_index[1]):
-        ii = int(i)
-        jj = int(j)
-        adj[ii].add(jj)
-        adj[jj].add(ii)
-    return adj
-
-
-def _components_stats(num_nodes: int, edge_index: np.ndarray) -> tuple[int, float]:
-    if num_nodes == 0:
-        return 0, 0.0
-    adj = _undirected_adjacency(num_nodes, edge_index)
-    seen = [False] * num_nodes
-    sizes: list[int] = []
-
-    for start in range(num_nodes):
-        if seen[start]:
-            continue
-        q: deque[int] = deque([start])
-        seen[start] = True
-        size = 0
-        while q:
-            node = q.popleft()
-            size += 1
-            for nb in adj[node]:
-                if not seen[nb]:
-                    seen[nb] = True
-                    q.append(nb)
-        sizes.append(size)
-
-    lcc = max(sizes) if sizes else 0
-    return len(sizes), float(lcc) / float(num_nodes)
-
-
-def _degree_stats(num_nodes: int, edge_index: np.ndarray) -> dict[str, float]:
-    if num_nodes == 0:
-        return {"min": 0.0, "median": 0.0, "max": 0.0, "p95": 0.0}
-    deg = np.zeros(num_nodes, dtype=np.int64)
-    for i, j in zip(edge_index[0], edge_index[1]):
-        ii = int(i)
-        jj = int(j)
-        deg[ii] += 1
-        if ii != jj:
-            deg[jj] += 1
-    return {
-        "min": float(np.min(deg)),
-        "median": float(np.median(deg)),
-        "max": float(np.max(deg)),
-        "p95": float(np.percentile(deg, 95)),
-    }
+def feature_nbytes(X) -> int:
+    if sparse.issparse(X):
+        return int(X.data.nbytes + X.indices.nbytes + X.indptr.nbytes)
+    arr = np.asarray(X)
+    return int(arr.nbytes)
 
 
 def compute_graph_metrics(
-    num_nodes: int,
-    edge_index: np.ndarray,
-    directedness: str,
-    preprocessing_time_sec: float,
-    edge_construction_time_sec: float,
-    node_features_bytes: int,
+    A: sparse.csr_matrix,
+    X,
+    feature_time_sec: float,
+    knn_time_sec: float,
+    ops_time_sec: float,
+    metrics_time_sec: float,
 ) -> dict[str, Any]:
-    e = int(edge_index.shape[1])
-    n = int(num_nodes)
+    n = int(A.shape[0])
+    e = int(A.nnz)
 
-    out_deg = np.bincount(edge_index[0], minlength=n) if n > 0 else np.array([], dtype=np.int64)
-    in_deg = np.bincount(edge_index[1], minlength=n) if n > 0 else np.array([], dtype=np.int64)
-    deg_u = out_deg + in_deg
+    out_deg = np.asarray(A.getnnz(axis=1)).reshape(-1)
+    in_deg = np.asarray(A.getnnz(axis=0)).reshape(-1)
 
-    if n > 1:
-        if directedness == "directed":
-            density = float(e) / float(n * (n - 1))
-        else:
-            density = float(2 * e) / float(n * (n - 1))
+    density = float(e) / float(max(n * (n - 1), 1))
+
+    U = A.maximum(A.T).tocsr()
+    n_comp, labels = connected_components(U, directed=False, return_labels=True)
+    if n > 0:
+        comp_sizes = np.bincount(labels)
+        lcc_fraction = float(comp_sizes.max()) / float(n)
     else:
-        density = 0.0
-
-    pairs = set(zip(edge_index[0].tolist(), edge_index[1].tolist()))
-    recip = 0
-    for i, j in pairs:
-        if (j, i) in pairs:
-            recip += 1
-    reciprocity = float(recip) / float(max(len(pairs), 1))
-
-    num_components, lcc_frac = _components_stats(n, edge_index)
+        lcc_fraction = 0.0
+    deg_u = np.asarray(U.getnnz(axis=1)).reshape(-1)
     isolated = int(np.sum(deg_u == 0)) if n > 0 else 0
-    edge_index_bytes = int(edge_index.nbytes)
 
-    stats = {
+    R = A.minimum(A.T).tocsr()
+    reciprocity = float(R.nnz) / float(max(e, 1))
+
+    if n > 0:
+        deg_stats = {
+            "min": float(np.min(deg_u)),
+            "median": float(np.median(deg_u)),
+            "max": float(np.max(deg_u)),
+            "p95": float(np.percentile(deg_u, 95)),
+        }
+    else:
+        deg_stats = {"min": 0.0, "median": 0.0, "max": 0.0, "p95": 0.0}
+
+    edge_index_bytes = int(2 * e * 4)
+    x_bytes = feature_nbytes(X)
+
+    return {
         "N": n,
         "E": e,
-        "mean_out_degree": float(np.mean(out_deg)) if n > 0 else 0.0,
-        "mean_in_degree": float(np.mean(in_deg)) if n > 0 else 0.0,
-        "mean_degree_undirected_view": float(np.mean(deg_u)) if n > 0 else 0.0,
+        "mean_out_degree": float(out_deg.mean()) if n > 0 else 0.0,
+        "mean_in_degree": float(in_deg.mean()) if n > 0 else 0.0,
         "density": density,
-        "num_components": int(num_components),
-        "LCC_fraction": float(lcc_frac),
+        "num_components": int(n_comp),
+        "LCC_fraction": lcc_fraction,
         "isolated_nodes_count": isolated,
-        "isolated_nodes_pct": float(isolated) / float(max(n, 1)) * 100.0,
+        "isolated_nodes_pct": float(isolated) * 100.0 / float(max(n, 1)),
         "reciprocity": reciprocity,
-        "degree_stats": _degree_stats(n, edge_index),
-        "preprocessing_time_sec": preprocessing_time_sec,
-        "edge_construction_time_sec": edge_construction_time_sec,
+        "degree_stats": deg_stats,
+        "feature_time_sec": feature_time_sec,
+        "knn_time_sec": knn_time_sec,
+        "ops_time_sec": ops_time_sec,
+        "metrics_time_sec": metrics_time_sec,
         "edge_index_bytes": edge_index_bytes,
-        "node_features_bytes": int(node_features_bytes),
-        "total_bytes": int(edge_index_bytes + node_features_bytes),
+        "X_bytes": x_bytes,
+        "total_bytes": int(edge_index_bytes + x_bytes),
     }
-    return stats
