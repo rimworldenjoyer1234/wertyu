@@ -6,7 +6,6 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
-from scipy import sparse
 
 
 def save_graph_bundle(
@@ -24,11 +23,7 @@ def save_graph_bundle(
     if edge_weight is not None:
         np.save(out_dir / "edge_weight.npy", edge_weight.astype(np.float32))
 
-    if sparse.issparse(node_features):
-        sparse.save_npz(out_dir / "node_features.npz", node_features)
-    else:
-        np.save(out_dir / "node_features.npy", np.asarray(node_features, dtype=np.float32))
-
+    np.save(out_dir / "node_features.npy", np.asarray(node_features, dtype=np.float32))
     np.save(out_dir / "y_bin.npy", y_bin.astype(np.int8))
 
     np.savez(
