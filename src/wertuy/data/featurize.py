@@ -87,7 +87,10 @@ def _try_sklearn_pipeline(
     seed: int,
     pca_dim: int | None,
     metric: str,
+    use_sklearn_backend: bool,
 ) -> tuple[np.ndarray, dict[str, Any], bool]:
+    if not use_sklearn_backend:
+        return np.empty((0, 0), dtype=np.float32), {}, False
     try:
         from sklearn.compose import ColumnTransformer
         from sklearn.decomposition import TruncatedSVD
@@ -137,6 +140,7 @@ def build_feature_matrix(
     seed: int,
     pca_dim: int | None,
     metric: str,
+    use_sklearn_backend: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, dict[str, np.ndarray]]:
     cache_root = cache_dir / dataset_name / scope
     cache_root.mkdir(parents=True, exist_ok=True)
@@ -175,6 +179,7 @@ def build_feature_matrix(
         seed=seed,
         pca_dim=pca_dim,
         metric=metric,
+        use_sklearn_backend=use_sklearn_backend,
     )
     if not used_sklearn:
         X, enc_meta = _build_numpy_features(df_train, df_all, feature_cols)

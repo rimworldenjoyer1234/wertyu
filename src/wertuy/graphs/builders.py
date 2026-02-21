@@ -57,31 +57,35 @@ def build_similarity_knn_graph(
     X,
     k: int,
     metric: str = "cosine",
+    use_sklearn: bool = False,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     n = X.shape[0]
     if n == 0 or k <= 0:
         return np.array([], dtype=np.int32), np.array([], dtype=np.int32), None
 
-    # Try sklearn backend first (faster/more scalable when available).
-    try:
-        from sklearn.neighbors import NearestNeighbors
+    # Optional sklearn backend (off by default to avoid noisy ABI crashes on broken SciPy/NumPy installs).
+    if use_sklearn:
+        try:
+            from sklearn.neighbors import NearestNeighbors
 
-        n_neighbors = min(k + 1, n)
-        nn = NearestNeighbors(n_neighbors=n_neighbors, metric=metric, algorithm="auto", n_jobs=-1)
-        nn.fit(X)
-        distances, indices = nn.kneighbors(X, return_distance=True)
-        src = np.repeat(np.arange(n, dtype=np.int32), n_neighbors - 1)
-        dst = indices[:, 1:].reshape(-1).astype(np.int32)
-        if metric == "cosine":
-            weights = (1.0 - distances[:, 1:].reshape(-1)).astype(np.float32)
-        elif metric == "euclidean":
-            weights = np.exp(-distances[:, 1:].reshape(-1)).astype(np.float32)
-        else:
-            weights = None
-        return src, dst, weights
-    except Exception:
-        src, dst, weights = _numpy_knn(np.asarray(X), k=k, metric=metric)
-        return src, dst, weights
+            n_neighbors = min(k + 1, n)
+            nn = NearestNeighbors(n_neighbors=n_neighbors, metric=metric, algorithm="auto", n_jobs=-1)
+            nn.fit(X)
+            distances, indices = nn.kneighbors(X, return_distance=True)
+            src = np.repeat(np.arange(n, dtype=np.int32), n_neighbors - 1)
+            dst = indices[:, 1:].reshape(-1).astype(np.int32)
+            if metric == "cosine":
+                weights = (1.0 - distances[:, 1:].reshape(-1)).astype(np.float32)
+            elif metric == "euclidean":
+                weights = np.exp(-distances[:, 1:].reshape(-1)).astype(np.float32)
+            else:
+                weights = None
+            return src, dst, weights
+        except Exception:
+            pass
+
+    src, dst, weights = _numpy_knn(np.asarray(X), k=k, metric=metric)
+    return src, dst, weights
 
 
 def build_relational_shared_entity_graph(

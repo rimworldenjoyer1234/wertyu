@@ -40,6 +40,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--stage", choices=["featurize", "graphs", "all"], default="all")
     parser.add_argument("--fast_grid", action="store_true")
     parser.add_argument("--store_base_only", action="store_true", default=True)
+    parser.add_argument("--use_sklearn_backend", action="store_true", help="Opt-in sklearn/scipy backend for featurization/kNN")
     return parser.parse_args()
 
 
@@ -134,6 +135,7 @@ def main() -> None:
             seed=args.seed,
             pca_dim=args.pca_dim,
             metric=args.metric,
+            use_sklearn_backend=args.use_sklearn_backend,
         )
         feature_time = time.perf_counter() - t0
 
@@ -166,7 +168,7 @@ def main() -> None:
                 continue
 
             t1 = time.perf_counter()
-            src, dst, w = build_similarity_knn_graph(X, k=k, metric=args.metric)
+            src, dst, w = build_similarity_knn_graph(X, k=k, metric=args.metric, use_sklearn=args.use_sklearn_backend)
             knn_time = time.perf_counter() - t1
 
             t2 = time.perf_counter()
@@ -187,7 +189,7 @@ def main() -> None:
             stats["metrics_time_sec"] = time.perf_counter() - t3
 
             edge_index = to_edge_index(A)
-            edge_weight = A.data.astype(np.float32) if A.nnz > 0 else None
+            edge_weight = A.weights.astype(np.float32) if (A.weights is not None and A.nnz > 0) else None
 
             save_graph_bundle(
                 out_dir=graph_dir,
