@@ -132,6 +132,10 @@ def main() -> None:
                 "training_time_per_epoch_seconds": out["training_time_per_epoch_seconds"],
                 "total_training_time_seconds": out["total_training_time_seconds"],
                 "epochs_ran": out["epochs_ran"],
+                "best_threshold": out.get("best_threshold"),
+                "best_val_mcc": out.get("best_val_mcc"),
+                "class_weight_neg": out.get("class_weight_neg"),
+                "class_weight_pos": out.get("class_weight_pos"),
             }
             out_dir = args.results_dir / args.dataset / args.model / gdir.name
             out_dir.mkdir(parents=True, exist_ok=True)

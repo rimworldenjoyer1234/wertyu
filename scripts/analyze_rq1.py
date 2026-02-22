@@ -57,6 +57,8 @@ def main() -> None:
                 "edge_creation_time_seconds": d.get("graph_metadata", {}).get("edge_creation_time_seconds"),
                 "estimated_graph_memory_bytes": d.get("graph_metadata", {}).get("estimated_graph_memory_bytes"),
                 "total_training_time_seconds": d.get("total_training_time_seconds"),
+                "auc_pr_test": d.get("test", {}).get("auc_pr"),
+                "auc_roc_test": d.get("test", {}).get("auc_roc"),
             }
         )
 
@@ -106,21 +108,44 @@ def main() -> None:
         plt.savefig(out2)
         plt.close()
 
-        pto = g.groupby("method", as_index=False).agg({"mcc_test": "mean", "edge_creation_time_seconds": "mean", "total_training_time_seconds": "mean"})
-        pto["total_cost"] = pto["edge_creation_time_seconds"] + pto["total_training_time_seconds"]
-        plt.figure()
-        plt.scatter(pto["total_cost"], pto["mcc_test"])
-        for _, r in pto.iterrows():
-            plt.annotate(r["method"], (r["total_cost"], r["mcc_test"]))
-        plt.xlabel("Total cost (sec)")
-        plt.ylabel("Test MCC")
-        plt.title(f"Pareto | {ds} | {model}")
-        plt.tight_layout()
-        out3 = figdir / f"pareto_{ds}_{model}.png"
-        plt.savefig(out3)
-        plt.close()
 
-        LOGGER.info("Wrote figures: %s, %s, %s", out1, out2, out3)
+        aucg = g.dropna(subset=["auc_pr_test", "auc_roc_test"]).groupby(["budget", "method"], as_index=False)[["auc_pr_test", "auc_roc_test"]].mean()
+        if len(aucg) > 0:
+            plt.figure()
+            for m, gm in aucg.groupby("method"):
+                plt.plot(gm["budget"], gm["auc_pr_test"], marker="o", label=f"{m}:AUC-PR")
+                plt.plot(gm["budget"], gm["auc_roc_test"], marker="x", linestyle="--", label=f"{m}:AUC-ROC")
+            plt.xlabel("Target avg degree")
+            plt.ylabel("AUC")
+            plt.title(f"AUC vs Budget | {ds} | {model}")
+            plt.legend(fontsize=8)
+            plt.tight_layout()
+            out_auc = figdir / f"auc_vs_budget_{ds}_{model}.png"
+            plt.savefig(out_auc)
+            plt.close()
+        else:
+            out_auc = None
+
+        pto = g.groupby(["budget", "method"], as_index=False).agg({"mcc_test": "mean", "edge_creation_time_seconds": "mean", "total_training_time_seconds": "mean"})
+        pto["total_cost"] = pto["edge_creation_time_seconds"] + pto["total_training_time_seconds"]
+        if len(pto) > 0:
+            plt.figure()
+            for bval, pb in pto.groupby("budget"):
+                plt.scatter(pb["total_cost"], pb["mcc_test"], label=f"budget={bval}")
+                for _, r in pb.iterrows():
+                    plt.annotate(r["method"], (r["total_cost"], r["mcc_test"]))
+            plt.xlabel("Total cost (sec)")
+            plt.ylabel("Test MCC")
+            plt.title(f"Pareto | {ds} | {model}")
+            plt.legend(fontsize=8)
+            plt.tight_layout()
+            out3 = figdir / f"pareto_{ds}_{model}.png"
+            plt.savefig(out3)
+            plt.close()
+        else:
+            out3 = None
+
+        LOGGER.info("Wrote figures: %s, %s, %s, %s", out1, out2, out3, out_auc)
 
 
 if __name__ == "__main__":
