@@ -1,0 +1,82 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import matplotlib.pyplot as plt
+import pandas as pd
+
+
+def main() -> None:
+    root = Path("results/rq1")
+    rows = []
+    for p in root.glob("*/*/rq1_*/*.json"):
+        d = json.loads(p.read_text(encoding="utf-8"))
+        rows.append(
+            {
+                "dataset": d["dataset"],
+                "model": d["model"],
+                "graph_id": d["graph_id"],
+                "seed": d["seed"],
+                "method": d["graph_metadata"]["method"],
+                "budget": d["graph_metadata"]["budget_target_avg_degree"],
+                "mcc_val": d["val"]["mcc"],
+                "mcc_test": d["test"]["mcc"],
+                "edge_creation_time_seconds": d["graph_metadata"]["edge_creation_time_seconds"],
+                "estimated_graph_memory_bytes": d["graph_metadata"]["estimated_graph_memory_bytes"],
+                "total_training_time_seconds": d["total_training_time_seconds"],
+            }
+        )
+
+    if not rows:
+        return
+    df = pd.DataFrame(rows)
+    out_csv = root / "summary.csv"
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    df.to_csv(out_csv, index=False)
+
+    figdir = root / "figures"
+    figdir.mkdir(parents=True, exist_ok=True)
+
+    for (ds, model), g in df.groupby(["dataset", "model"]):
+        agg = g.groupby(["budget", "method"], as_index=False)["mcc_test"].mean()
+        plt.figure()
+        for m, gm in agg.groupby("method"):
+            plt.plot(gm["budget"], gm["mcc_test"], marker="o", label=m)
+        plt.xlabel("Target avg degree")
+        plt.ylabel("Test MCC")
+        plt.title(f"MCC vs Budget | {ds} | {model}")
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(figdir / f"mcc_vs_budget_{ds}_{model}.png")
+        plt.close()
+
+        cost = g.groupby(["budget", "method"], as_index=False)[["edge_creation_time_seconds", "total_training_time_seconds"]].mean()
+        plt.figure()
+        for m, gm in cost.groupby("method"):
+            plt.plot(gm["budget"], gm["edge_creation_time_seconds"], marker="o", label=f"{m}:construct")
+            plt.plot(gm["budget"], gm["total_training_time_seconds"], marker="x", linestyle="--", label=f"{m}:train")
+        plt.xlabel("Target avg degree")
+        plt.ylabel("Seconds")
+        plt.title(f"Cost vs Budget | {ds}")
+        plt.legend(fontsize=8)
+        plt.tight_layout()
+        plt.savefig(figdir / f"cost_vs_budget_{ds}.png")
+        plt.close()
+
+        p = g.groupby("method", as_index=False).agg({"mcc_test": "mean", "edge_creation_time_seconds": "mean", "total_training_time_seconds": "mean"})
+        p["total_cost"] = p["edge_creation_time_seconds"] + p["total_training_time_seconds"]
+        plt.figure()
+        plt.scatter(p["total_cost"], p["mcc_test"])
+        for _, r in p.iterrows():
+            plt.annotate(r["method"], (r["total_cost"], r["mcc_test"]))
+        plt.xlabel("Total cost (sec)")
+        plt.ylabel("Test MCC")
+        plt.title(f"Pareto | {ds} | {model}")
+        plt.tight_layout()
+        plt.savefig(figdir / f"pareto_{ds}_{model}.png")
+        plt.close()
+
+
+if __name__ == "__main__":
+    main()
