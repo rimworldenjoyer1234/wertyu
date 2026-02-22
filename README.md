@@ -40,3 +40,6 @@ Outputs:
 Troubleshooting:
 - If `run_rq1` prints that no graph folders were found, verify you built RQ1 graphs first and that folders match prefix `rq1_` under `data/graphs/<dataset>/`.
 - You can run with a custom prefix filter: `python -m scripts.run_rq1 --dataset unsw-nb15 --graph_pattern rq1_ ...`
+
+- If you want to train over fast-grid cached graphs, run with `--graph_pattern base_sim_knn_`.
+- To skip broken/missing graph folders instead of failing, add `--no-strict`.
