@@ -28,6 +28,8 @@ python -m scripts.run_rq1 --dataset unsw-nb15 --graphs_dir data/graphs --process
 
 ```bash
 python scripts/analyze_rq1.py
+# Optional filter when mixing graph families:
+# python scripts/analyze_rq1.py --graph_pattern base_sim_knn_
 ```
 
 Outputs:
