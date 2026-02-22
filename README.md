@@ -20,8 +20,8 @@ python scripts/build_graphs_rq1.py --dataset unsw-nb15 --processed_dir data/proc
 3. Run RQ1 models:
 
 ```bash
-python scripts/run_rq1.py --dataset unsw-nb15 --graphs_dir data/graphs --processed_dir data/processed --results_dir results/rq1 --model gcn --seeds 0,1,2 --epochs 100 --lr 0.001 --hidden_dim 64 --device cpu
-python scripts/run_rq1.py --dataset unsw-nb15 --graphs_dir data/graphs --processed_dir data/processed --results_dir results/rq1 --model gat --seeds 0,1,2 --epochs 100 --lr 0.001 --hidden_dim 64 --device cpu
+python -m scripts.run_rq1 --dataset unsw-nb15 --graphs_dir data/graphs --processed_dir data/processed --results_dir results/rq1 --model gcn --seeds 0,1,2 --epochs 100 --lr 0.001 --hidden_dim 64 --device cpu
+python -m scripts.run_rq1 --dataset unsw-nb15 --graphs_dir data/graphs --processed_dir data/processed --results_dir results/rq1 --model gat --seeds 0,1,2 --epochs 100 --lr 0.001 --hidden_dim 64 --device cpu
 ```
 
 4. Aggregate and plot:
