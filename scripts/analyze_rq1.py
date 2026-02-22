@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -11,8 +12,11 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
+LOGGER = logging.getLogger("analyze_rq1")
+
 
 def main() -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     root = Path("results/rq1")
     rows = []
     for p in root.glob("*/*/rq1_*/*.json"):
@@ -34,11 +38,15 @@ def main() -> None:
         )
 
     if not rows:
+        LOGGER.warning("No result JSON files found under %s (pattern */*/rq1_*/*.json)", root)
+        LOGGER.warning("Run scripts/run_rq1.py first and verify graph IDs/results paths.")
         return
+
     df = pd.DataFrame(rows)
     out_csv = root / "summary.csv"
     out_csv.parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(out_csv, index=False)
+    LOGGER.info("Wrote summary CSV: %s (rows=%d)", out_csv, len(df))
 
     figdir = root / "figures"
     figdir.mkdir(parents=True, exist_ok=True)
@@ -53,7 +61,8 @@ def main() -> None:
         plt.title(f"MCC vs Budget | {ds} | {model}")
         plt.legend()
         plt.tight_layout()
-        plt.savefig(figdir / f"mcc_vs_budget_{ds}_{model}.png")
+        out1 = figdir / f"mcc_vs_budget_{ds}_{model}.png"
+        plt.savefig(out1)
         plt.close()
 
         cost = g.groupby(["budget", "method"], as_index=False)[["edge_creation_time_seconds", "total_training_time_seconds"]].mean()
@@ -66,7 +75,8 @@ def main() -> None:
         plt.title(f"Cost vs Budget | {ds}")
         plt.legend(fontsize=8)
         plt.tight_layout()
-        plt.savefig(figdir / f"cost_vs_budget_{ds}.png")
+        out2 = figdir / f"cost_vs_budget_{ds}.png"
+        plt.savefig(out2)
         plt.close()
 
         p = g.groupby("method", as_index=False).agg({"mcc_test": "mean", "edge_creation_time_seconds": "mean", "total_training_time_seconds": "mean"})
@@ -79,8 +89,11 @@ def main() -> None:
         plt.ylabel("Test MCC")
         plt.title(f"Pareto | {ds} | {model}")
         plt.tight_layout()
-        plt.savefig(figdir / f"pareto_{ds}_{model}.png")
+        out3 = figdir / f"pareto_{ds}_{model}.png"
+        plt.savefig(out3)
         plt.close()
+
+        LOGGER.info("Wrote figures: %s, %s, %s", out1, out2, out3)
 
 
 if __name__ == "__main__":

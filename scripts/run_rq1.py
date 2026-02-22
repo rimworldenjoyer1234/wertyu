@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import logging
 import sys
 from pathlib import Path
 
@@ -14,6 +15,8 @@ if str(REPO_ROOT) not in sys.path:
 
 from src.wertuy.training.train_supervised import TrainConfig, train_supervised
 from src.wertuy.utils.seed import set_global_seed
+
+LOGGER = logging.getLogger("run_rq1")
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,16 +31,43 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--hidden_dim", type=int, default=64)
     p.add_argument("--device", default="cpu")
+    p.add_argument("--graph_pattern", default="rq1_", help="Graph directory prefix to include")
+    p.add_argument("--strict", action="store_true", default=True, help="Fail if no graphs/results are found")
     return p.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
     graph_root = args.graphs_dir / args.dataset
-    graph_dirs = sorted([d for d in graph_root.iterdir() if d.is_dir() and d.name.startswith("rq1_")])
+    if not graph_root.exists():
+        msg = f"Graph directory does not exist: {graph_root}. Build graphs first with scripts/build_graphs_rq1.py"
+        if args.strict:
+            raise FileNotFoundError(msg)
+        LOGGER.warning(msg)
+        return
+
+    graph_dirs = sorted([d for d in graph_root.iterdir() if d.is_dir() and d.name.startswith(args.graph_pattern)])
     seeds = [int(s) for s in args.seeds.split(",") if s]
 
+    if not graph_dirs:
+        msg = (
+            f"No graph folders found in {graph_root} with prefix '{args.graph_pattern}'. "
+            "Expected folders like rq1_knn_directed_d8_pca32. "
+            "Run scripts/build_graphs_rq1.py first."
+        )
+        if args.strict:
+            raise RuntimeError(msg)
+        LOGGER.warning(msg)
+        return
+
+    LOGGER.info("Found %d graph folders for dataset=%s", len(graph_dirs), args.dataset)
+    LOGGER.info("Running model=%s across seeds=%s", args.model, seeds)
+
+    total_runs = 0
     for gdir in graph_dirs:
+        LOGGER.info("Processing graph: %s", gdir.name)
         edge_index = torch.load(gdir / "edge_index.pt").numpy()
         x = np.load(gdir / "node_features.npy").astype(np.float32)
         y = np.load(gdir / "y_bin.npy").astype(np.int8)
@@ -64,7 +94,14 @@ def main() -> None:
             }
             out_dir = args.results_dir / args.dataset / args.model / gdir.name
             out_dir.mkdir(parents=True, exist_ok=True)
-            (out_dir / f"{seed}.json").write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            out_file = out_dir / f"{seed}.json"
+            out_file.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            total_runs += 1
+            LOGGER.info("Saved %s", out_file)
+
+    if total_runs == 0 and args.strict:
+        raise RuntimeError("No runs were executed. Check graph folders and seed list.")
+    LOGGER.info("Completed %d runs", total_runs)
 
 
 if __name__ == "__main__":

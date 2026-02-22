@@ -35,3 +35,8 @@ Outputs:
 - Per-seed run JSON: `results/rq1/<dataset>/<model>/<graph_id>/<seed>.json`
 - Summary: `results/rq1/summary.csv`
 - Figures: `results/rq1/figures/*.png`
+
+
+Troubleshooting:
+- If `run_rq1` prints that no graph folders were found, verify you built RQ1 graphs first and that folders match prefix `rq1_` under `data/graphs/<dataset>/`.
+- You can run with a custom prefix filter: `python -m scripts.run_rq1 --dataset unsw-nb15 --graph_pattern rq1_ ...`
